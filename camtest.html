@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Тест камер</title>
+<style>
+body{font:14px/1.35 system-ui,sans-serif;margin:0;padding:10px;background:#111;color:#eee}
+button{min-height:44px;padding:6px 12px;margin:3px 3px 3px 0;border:1px solid #555;border-radius:8px;background:#2a2d38;color:#fff;font:inherit}
+button.on{background:#2f5bea}
+video{width:100%;max-height:45vh;background:#000;border-radius:8px;object-fit:contain}
+pre{white-space:pre-wrap;word-break:break-all;background:#1b1e27;padding:8px;border-radius:8px;font-size:12px;max-height:40vh;overflow:auto}
+h3{margin:12px 0 4px}
+</style></head><body>
+<h2>Тест камер</h2>
+<div id="env"></div>
+<button id="b0">1. Запросить доступ (facingMode: environment)</button>
+<button id="b1">2. Список камер</button>
+<button id="b2">Стоп</button>
+<video id="v" playsinline muted autoplay></video>
+<h3>Камеры (нажмите для запуска по deviceId)</h3>
+<div id="cams"></div>
+<h3>Режимы facingMode</h3>
+<div id="fm"></div>
+<h3>Зум текущего потока</h3>
+<div id="zoom"></div>
+<h3>Текущий трек</h3>
+<pre id="trk"></pre>
+<h3>Журнал (скопируйте целиком и пришлите)</h3>
+<button id="cp">Копировать журнал</button>
+<pre id="log"></pre>
+<script>
+const $=s=>document.querySelector(s), L=[]; let stream=null;
+const log=(...a)=>{const t=a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,1)).join(' ');L.push(t);$('#log').textContent=L.join('\n');};
+$('#env').textContent=`UA: ${navigator.userAgent}\nhttps: ${location.protocol==='https:'} (${location.protocol})`;
+$('#env').style.whiteSpace='pre-wrap';
+const stop=()=>{if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;$('#v').srcObject=null;};
+async function start(c,label){
+  stop();
+  try{stream=await navigator.mediaDevices.getUserMedia({video:c,audio:false});}
+  catch(e){log('ОШИБКА',label,e.name,e.message);return false;}
+  const v=$('#v');v.srcObject=stream;await v.play().catch(()=>{});
+  info(label);return true;
+}
+function info(label){
+  const t=stream.getVideoTracks()[0],s=t.getSettings(),c=t.getCapabilities?t.getCapabilities():{};
+  $('#trk').textContent=JSON.stringify({label:t.label,settings:s,capabilities:c},null,1);
+  log('СТАРТ',label,'→',t.label,'| deviceId',(s.deviceId||'').slice(0,8),'| facing',s.facingMode,'|',s.width+'x'+s.height,'| zoom',s.zoom,c.zoom?`(cap ${c.zoom.min}…${c.zoom.max}, step ${c.zoom.step})`:'(zoom нет)');
+  zoomUI(t,c);
+}
+function zoomUI(t,c){
+  const z=$('#zoom');z.innerHTML='';
+  if(!c.zoom){z.textContent='Браузер не даёт управлять зумом у этого трека';return;}
+  const vals=[...new Set([c.zoom.min,0.5,1,2,3,c.zoom.max].filter(x=>x>=c.zoom.min&&x<=c.zoom.max))].sort((a,b)=>a-b);
+  vals.forEach(val=>{const b=document.createElement('button');b.textContent='×'+val;b.onclick=async()=>{
+    try{await t.applyConstraints({advanced:[{zoom:val}]});log('zoom →',val,'факт',t.getSettings().zoom);$('#trk').textContent=JSON.stringify({label:t.label,settings:t.getSettings(),capabilities:c},null,1);}catch(e){log('zoom ошибка',e.name,e.message);}};z.appendChild(b);});
+}
+async function list(){
+  if(!navigator.mediaDevices){log('mediaDevices нет (нужен https)');return;}
+  const d=(await navigator.mediaDevices.enumerateDevices()).filter(x=>x.kind==='videoinput');
+  log('videoinput:',d.length);
+  d.forEach((x,i)=>log(` #${i} label="${x.label}" id=${x.deviceId.slice(0,8)} group=${x.groupId.slice(0,6)}`));
+  const box=$('#cams');box.innerHTML='';
+  if(!d.length)box.textContent='камер нет';
+  d.forEach((x,i)=>{const b=document.createElement('button');b.textContent=`#${i} ${x.label||'(без названия — сначала дайте доступ)'}`;
+    b.onclick=async()=>{await start({deviceId:{exact:x.deviceId},width:{ideal:1280}},'deviceId #'+i);};box.appendChild(b);});
+  // каждая камера: возможности без показа
+  for(let i=0;i<d.length;i++){
+    try{const s=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:d[i].deviceId}}});const t=s.getVideoTracks()[0],st=t.getSettings(),c=t.getCapabilities?t.getCapabilities():{};
+      log(` #${i} зонд: facing=${st.facingMode} ${st.width}x${st.height} zoom=${st.zoom} cap.zoom=${c.zoom?c.zoom.min+'…'+c.zoom.max:'нет'} cap.facing=${(c.facingMode||[]).join('/')}`);s.getTracks().forEach(x=>x.stop());}
+    catch(e){log(` #${i} зонд ошибка`,e.name,e.message);}
+  }
+}
+function fmUI(){
+  const box=$('#fm');
+  [['environment ideal',{facingMode:{ideal:'environment'}}],['environment exact',{facingMode:{exact:'environment'}}],['user',{facingMode:'user'}],['без ограничений',true]].forEach(([n,c])=>{
+    const b=document.createElement('button');b.textContent=n;b.onclick=()=>start(c===true?true:{...c,width:{ideal:1280}},n);box.appendChild(b);});
+}
+$('#b0').onclick=async()=>{if(await start({facingMode:{ideal:'environment'},width:{ideal:1280}},'environment ideal'))await list();};
+$('#b1').onclick=list;
+$('#b2').onclick=()=>{stop();log('стоп');};
+$('#cp').onclick=async()=>{try{await navigator.clipboard.writeText($('#log').textContent+'\n'+$('#trk').textContent);log('скопировано');}catch(e){log('копирование не удалось, выделите текст вручную');}};
+fmUI();
+log('Готово. Нажмите «1. Запросить доступ».');
+</script></body></html>
